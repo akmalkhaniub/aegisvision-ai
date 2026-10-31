@@ -1,0 +1,19 @@
+[project]
+name = "aegisvision-ai"
+version = "1.0.0"
+description = "AegisVision AI: 3-Tier Industrial Visual Inspection, Retail Planogram Vision, ONNX Runtime Quantization & LangGraph SOP Root-Cause Copilot"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "numpy>=1.26.0",
+    "scikit-learn>=1.5.0",
+    "httpx>=0.27.0",
+    "pytest>=8.3.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

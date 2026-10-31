@@ -1,0 +1,33 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-t"
+      - "us-central1-docker.pkg.dev/$PROJECT_ID/ai-portfolio/aegisvision-ai:$COMMIT_SHA"
+      - "-t"
+      - "us-central1-docker.pkg.dev/$PROJECT_ID/ai-portfolio/aegisvision-ai:latest"
+      - "."
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "--all-tags"
+      - "us-central1-docker.pkg.dev/$PROJECT_ID/ai-portfolio/aegisvision-ai"
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "deploy"
+      - "aegisvision-ai"
+      - "--image=us-central1-docker.pkg.dev/$PROJECT_ID/ai-portfolio/aegisvision-ai:$COMMIT_SHA"
+      - "--region=us-central1"
+      - "--gpu=1"
+      - "--gpu-type=nvidia-l4"
+      - "--cpu=4"
+      - "--memory=16Gi"
+      - "--min-instances=0"
+      - "--max-instances=4"
+      - "--no-cpu-throttling"
+      - "--allow-unauthenticated"
+images:
+  - "us-central1-docker.pkg.dev/$PROJECT_ID/ai-portfolio/aegisvision-ai:$COMMIT_SHA"
+  - "us-central1-docker.pkg.dev/$PROJECT_ID/ai-portfolio/aegisvision-ai:latest"

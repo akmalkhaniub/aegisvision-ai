@@ -1,0 +1,33 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: aegisvision-ai
+  annotations:
+    run.googleapis.com/launch-stage: BETA
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        # Scale down to 0 instances when idle ($0.00/hr idle GPU cost)
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "4"
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 16
+      timeoutSeconds: 120
+      containers:
+        - image: us-central1-docker.pkg.dev/PROJECT_ID/ai-portfolio/aegisvision-ai:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DEFAULT_EXECUTION_PROVIDER
+              value: "ONNX_FP16"
+          resources:
+            limits:
+              cpu: "4000m"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+      nodeSelector:
+        run.googleapis.com/accelerator: nvidia-l4
