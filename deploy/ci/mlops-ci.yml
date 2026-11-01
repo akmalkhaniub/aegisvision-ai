@@ -1,0 +1,43 @@
+name: AegisVision MLOps 4-Gate CI/CD
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  mlops-eval-gate:
+    name: CV & MLOps Regression Gates (mAP, IoU, ByteTrack & Latency)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Gate 1 & 2 — Unit, Geometric Metrology & FastAPI Integration Suite
+        run: pytest -v
+
+      - name: Gate 3 & 4 — MLOps Model Accuracy (mAP@50 >= 0.93) & ByteTrack Zero-IDSW Gate
+        run: |
+          python -c "
+          from src.core.mlops_benchmark import RUNTIME_BENCHMARK_PROFILES
+          from src.core.bytetrack_oee import ByteTrackConveyorTracker
+          from src.core.preprocessing import INSPECTION_SCENARIOS
+          onnx_int8 = RUNTIME_BENCHMARK_PROFILES['ONNX_INT8']
+          assert onnx_int8['map_50'] >= 0.93, f'mAP@50 regression: {onnx_int8[\"map_50\"]}'
+          assert onnx_int8['latency_p95_ms'] <= 15.0, f'Latency budget exceeded: {onnx_int8[\"latency_p95_ms\"]}ms'
+          trk = ByteTrackConveyorTracker().simulate_conveyor_burst(INSPECTION_SCENARIOS['pcb-smt-line-01'], num_frames=8)
+          assert trk['id_switches'] == 0, 'ByteTrack ID switch regression detected'
+          assert trk['duplicate_rejects_prevented'] >= 15, 'Conveyor deduplication failed'
+          print('ALL 4 MLOPS GATES PASSED')
+          "

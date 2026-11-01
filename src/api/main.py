@@ -1,4 +1,4 @@
-"""FastAPI Backend for AegisVision AI (Industrial CV, Retail Vision, ONNX MLOps & SOP RAG Copilot)."""
+"""FastAPI Backend for AegisVision AI (Industrial CV, ByteTrack OEE, Document Intelligence & SOP RAG Copilot)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.core.bytetrack_oee import ByteTrackConveyorTracker
 from src.core.cv_pipeline import CascadedCVInspector
+from src.core.doc_intelligence import (
+    SPEC_DOCUMENT_TEMPLATES,
+    EngineeringDocIntelligenceParser,
+    analyze_custom_uploaded_matrix,
+)
 from src.core.mlops_benchmark import (
     RUNTIME_BENCHMARK_PROFILES,
     compute_population_stability_index,
@@ -65,6 +71,40 @@ class InspectFrameRequest(BaseModel):
     )
 
 
+class ConveyorTrackRequest(BaseModel):
+    """Request contract for running multi-frame ByteTrack + 2D Kalman Filter + OEE calculation."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    scenario_id: str = Field(default="pcb-smt-line-01")
+    num_frames: int = Field(default=8, ge=2, le=30)
+    velocity_x_px: float = Field(default=18.0, ge=0.0, le=80.0)
+
+
+class DocIntelligenceAuditRequest(BaseModel):
+    """Request contract for parsing Engineering Spec / COA documents and auditing CV detections."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    scenario_id: str = Field(default="pcb-smt-line-01")
+    raw_spec_text: str = Field(
+        default=SPEC_DOCUMENT_TEMPLATES["coa-aerospace-ipc-class3"]["raw_document_text"],
+        min_length=10,
+    )
+
+
+class CustomMatrixInspectRequest(BaseModel):
+    """Request contract for custom uploaded image matrix OpenCV CLAHE + Sobel ROI extraction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    luminance_grid: List[List[float]] = Field(
+        description="2D grayscale luminance array (H x W) in [0, 255] extracted from uploaded image canvas.",
+    )
+    micrometers_per_pixel: float = Field(default=15.0, ge=0.5, le=1000.0)
+    edge_threshold: float = Field(default=26.0, ge=5.0, le=150.0)
+
+
 class ApprovePseudoLabelRequest(BaseModel):
     """HITL approval payload for promoting zero-shot pseudo-labels into the YOLO/Detectron2 training set."""
 
@@ -77,9 +117,11 @@ class ApprovePseudoLabelRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Initialize singleton CV Preprocessor, Cascaded Inspector, and Hybrid SOP RAG Copilot."""
+    """Initialize singleton CV Preprocessor, Cascaded Inspector, ByteTrack OEE, Doc Parser & Hybrid RAG Copilot."""
     app.state.preprocessor = OpenCVPreprocessor()
     app.state.inspector = CascadedCVInspector()
+    app.state.tracker = ByteTrackConveyorTracker()
+    app.state.doc_parser = EngineeringDocIntelligenceParser()
     app.state.rag_copilot = SOPHybridRAGCopilot()
     app.state.distillation_ledger: List[Dict[str, Any]] = []
     yield
@@ -87,9 +129,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="AegisVision AI — Industrial & Retail Computer Vision Platform",
-    version="1.0.0",
+    version="2.0.0",
     description=(
         "3-Tier Cascaded Visual Inspection (OpenCV + YOLO26 NMS-Free + Detectron2 Mask R-CNN + SAM 2 Zero-Shot), "
+        "ByteTrack Multi-Frame Conveyor Kalman Tracking & OEE, Engineering COA Document Intelligence, "
         "ONNX/TensorRT Quantization Benchmarks, PSI Drift Telemetry & Hybrid RAG CAPA Copilot."
     ),
     lifespan=lifespan,
@@ -110,9 +153,15 @@ async def health_check() -> Dict[str, Any]:
     return {
         "status": "healthy",
         "service": "aegisvision-ai",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "scenarios_loaded": len(INSPECTION_SCENARIOS),
         "runtime_providers": list(RUNTIME_BENCHMARK_PROFILES.keys()),
+        "capabilities": [
+            "3-Tier Cascaded CV (YOLO26 + Detectron2 + SAM 2)",
+            "ByteTrack 2D Kalman Conveyor Tracking & OEE",
+            "Engineering COA Document Intelligence",
+            "Custom Image CLAHE + Sobel ROI Inspector",
+        ],
     }
 
 
@@ -136,7 +185,7 @@ async def list_scenarios() -> Dict[str, Any]:
                 "defect_count": len(sc.ground_truth_defects),
             }
         )
-    return {"scenarios": items}
+    return {"scenarios": items, "coa_templates": SPEC_DOCUMENT_TEMPLATES}
 
 
 @app.get("/api/v1/benchmarks")
@@ -147,7 +196,7 @@ async def list_benchmarks() -> Dict[str, Any]:
 
 @app.post("/api/v1/inspect")
 async def inspect_frame(payload: InspectFrameRequest) -> Dict[str, Any]:
-    """Run end-to-end OpenCV preprocessing, 3-Tier CV detection/segmentation, PSI drift, and SOP RAG CAPA."""
+    """Run end-to-end OpenCV preprocessing, 3-Tier CV detection/segmentation, ByteTrack OEE, PSI drift, and SOP RAG CAPA."""
     if payload.scenario_id not in INSPECTION_SCENARIOS:
         raise HTTPException(status_code=404, detail=f"Unknown scenario_id: {payload.scenario_id}")
     if payload.execution_provider not in RUNTIME_BENCHMARK_PROFILES:
@@ -156,6 +205,7 @@ async def inspect_frame(payload: InspectFrameRequest) -> Dict[str, Any]:
     scenario = INSPECTION_SCENARIOS[payload.scenario_id]
     preprocessor: OpenCVPreprocessor = app.state.preprocessor
     inspector: CascadedCVInspector = app.state.inspector
+    tracker: ByteTrackConveyorTracker = app.state.tracker
     rag_copilot: SOPHybridRAGCopilot = app.state.rag_copilot
 
     baseline_frame = preprocessor.synthesize_frame_tensor(scenario, illumination_shift_pct=0.0)
@@ -180,6 +230,8 @@ async def inspect_frame(payload: InspectFrameRequest) -> Dict[str, Any]:
         execution_provider=payload.execution_provider,
     )
 
+    conveyor_tracking = tracker.simulate_conveyor_burst(scenario=scenario, num_frames=8)
+
     capa_report = rag_copilot.retrieve_sop_and_generate_capa(
         detections=cv_results["detections"],
         scenario_title=scenario.title,
@@ -200,9 +252,54 @@ async def inspect_frame(payload: InspectFrameRequest) -> Dict[str, Any]:
         "opencv_preprocessing": opencv_telemetry,
         "drift_monitoring": drift_telemetry,
         "cv_inspection": cv_results,
+        "conveyor_tracking": conveyor_tracking,
         "capa_rag_report": capa_report,
         "runtime_profile": RUNTIME_BENCHMARK_PROFILES[payload.execution_provider],
     }
+
+
+@app.post("/api/v1/conveyor/track")
+async def track_conveyor_burst(payload: ConveyorTrackRequest) -> Dict[str, Any]:
+    """Run multi-frame ByteTrack 2D Kalman Filter tracking and OEE calculation."""
+    if payload.scenario_id not in INSPECTION_SCENARIOS:
+        raise HTTPException(status_code=404, detail=f"Unknown scenario_id: {payload.scenario_id}")
+    scenario = INSPECTION_SCENARIOS[payload.scenario_id]
+    tracker: ByteTrackConveyorTracker = app.state.tracker
+    return tracker.simulate_conveyor_burst(
+        scenario=scenario,
+        num_frames=payload.num_frames,
+        conveyor_speed_px_per_frame=(payload.velocity_x_px, 0.0),
+    )
+
+
+@app.post("/api/v1/doc-intelligence/audit")
+async def audit_against_spec_document(payload: DocIntelligenceAuditRequest) -> Dict[str, Any]:
+    """Parse unstructured Engineering Spec / COA text and audit CV detections against extracted limits."""
+    if payload.scenario_id not in INSPECTION_SCENARIOS:
+        raise HTTPException(status_code=404, detail=f"Unknown scenario_id: {payload.scenario_id}")
+    scenario = INSPECTION_SCENARIOS[payload.scenario_id]
+    inspector: CascadedCVInspector = app.state.inspector
+    doc_parser: EngineeringDocIntelligenceParser = app.state.doc_parser
+
+    parsed_rules = doc_parser.parse_spec_document(payload.raw_spec_text)
+    cv_results = inspector.run_inspection(
+        scenario=scenario,
+        conf_threshold=parsed_rules["confidence_floor_override"],
+    )
+    return doc_parser.evaluate_detections_against_spec(
+        raw_text=payload.raw_spec_text,
+        detections=cv_results["detections"],
+    )
+
+
+@app.post("/api/v1/inspect-custom")
+async def inspect_custom_uploaded_image(payload: CustomMatrixInspectRequest) -> Dict[str, Any]:
+    """Run CLAHE, 8-bin histogram, and Sobel gradient ROI extraction on a custom uploaded image matrix."""
+    return analyze_custom_uploaded_matrix(
+        luminance_grid=payload.luminance_grid,
+        micrometers_per_pixel=payload.micrometers_per_pixel,
+        edge_threshold=payload.edge_threshold,
+    )
 
 
 @app.post("/api/v1/distillation/approve")

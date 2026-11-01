@@ -18,7 +18,13 @@
 
 ---
 
-## 3-Tier Cascaded Architecture
+## 3-Tier Cascaded Architecture + Phase-2 Industrial MLOps
+
+1. **Stage 0 — OpenCV Metrology & Custom Image Upload Inspector**: Planar `3×3` homography perspective calibration (`µm/px`), CLAHE contrast normalization, 10-bin **Population Stability Index (PSI)** drift alerts, and interactive HTML5 `<canvas>` drag-and-drop custom image CLAHE/Sobel ROI inspection (`/api/v1/inspect-custom`).
+2. **Tier 1 & Tier 2 — Supervised Fast-Path (`YOLO26` + `Detectron2` Mask R-CNN) + Zero-Shot Cascade (`SAM 2` + `IsolationForest`)**: Sub-12ms detection and pixel-exact Shoelace polygon metrology ($\mu\text{m}^2$ / $\text{mm}^2$) paired with OOD routing for novel defects.
+3. **Multi-Frame Conveyor Object Tracking (`ByteTrack` + 2D Kalman Filter) & OEE Analytics**: Constant-velocity 2D Kalman Filter state prediction and two-stage ByteTrack association (`/api/v1/conveyor/track`) that recovers low-confidence specular glare dips (`0 IDSW`) and deduplicates multi-frame conveyor bursts (`24 raw frame hits -> 3 unique physical defects`) while computing live **OEE (`Availability × Performance × Quality`)**.
+4. **Multimodal Document Intelligence (Engineering Blueprint / COA Spec Parser)**: Parses customer Certificate of Analysis (COA) and Engineering Change Order (ECO) specifications (`/api/v1/doc-intelligence/audit`) to dynamically override maximum allowable defect area ($\text{mm}^2$), equivalent diameter ($\mu\text{m}$), and zero-tolerance class schedules.
+5. **Tier 3 — Hybrid RAG CAPA Copilot & Active Learning Distillation**: Dense + BM25 RRF over `IPC-A-610H`, `IATF 16949`, `FDA 21 CFR`, `GS1`, and `SEMI M1` SOPs + automated `YOLO26 (.txt)` and `Detectron2 COCO (.json)` pseudo-label export.
 
 ```mermaid
 flowchart TD
